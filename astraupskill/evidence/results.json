@@ -1,0 +1,32 @@
+{
+  "passed": true,
+  "executedTests": 6,
+  "checks": [
+    {
+      "project": "_Organized Desktop/05 Numbered Experiments/ww29",
+      "id": "4e19ba5b5028",
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "--test",
+        "tests/runtime-notification-open-lab.test.mjs"
+      ],
+      "cwd": "C:\\Users\\Owner\\Desktop\\AstraOrganized2\\astra-remaining-improvements\\stage\\4e19ba5b5028",
+      "environmentOverrides": {},
+      "startedAt": "2026-09-22T03:31:19.995501+00:00",
+      "status": "complete",
+      "log": "crud-b06-astra-runtime.log",
+      "pid": 1544,
+      "exitCode": 0,
+      "passed": true,
+      "finishedAt": "2026-09-22T03:31:27.046424+00:00",
+      "elapsedSeconds": 6.87
+    }
+  ],
+  "limits": [
+    "No production fix warranted in reviewed path.",
+    "No live Prisma transaction, Next route, worker, or repeated-open execution.",
+    "Normal project typecheck and provider-backed tests remain follow-up checks.",
+    "Real service, permissions, ApiError and repository aggregate functions execute. Prisma enum exports and unused rendering/Zod imports are adapted. Open tracking has no encompassing transaction; aggregate failure can follow earlier open writes."
+  ]
+}

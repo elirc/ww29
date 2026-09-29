@@ -1,0 +1,199 @@
+/// This schema defines the durable data boundaries for the notification platform.
+/// It is used by Prisma Client in `src/lib/db.ts` and by seed data in `prisma/seed.ts`.
+/// A junior engineer often under-models async systems by skipping attempt history or lock metadata, which makes retries and debugging much harder later.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum BatchStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  PARTIAL_FAILURE
+  FAILED
+}
+
+enum NotificationStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  PARTIAL_FAILURE
+  FAILED
+}
+
+enum DeliveryStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  FAILED
+  OPENED
+  SKIPPED
+  RATE_LIMITED
+  RETRYING
+}
+
+enum AttemptResult {
+  SENT
+  FAILED
+  RATE_LIMITED
+}
+
+model User {
+  id             String               @id @default(cuid())
+  email          String               @unique
+  passwordHash   String
+  name           String
+  role           UserRole
+  phoneNumber    String?
+  pushToken      String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  preferences    UserPreference?
+  batchesCreated NotificationBatch[]  @relation("BatchCreator")
+  notifications  Notification[]       @relation("NotificationRecipient")
+  audits         AuditLog[]           @relation("AuditActor")
+}
+
+model UserPreference {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  emailOptIn      Boolean  @default(true)
+  smsOptIn        Boolean  @default(false)
+  pushOptIn       Boolean  @default(true)
+  quietHoursStart Int?
+  quietHoursEnd   Int?
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model NotificationTemplate {
+  id              String                @id @default(cuid())
+  name            String                @unique
+  channel         NotificationChannel
+  description     String?
+  subjectTemplate String?
+  bodyTemplate    String
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  batches         NotificationBatch[]
+}
+
+model NotificationBatch {
+  id             String         @id @default(cuid())
+  createdById    String
+  templateId     String?
+  name           String
+  status         BatchStatus    @default(QUEUED)
+  recipientCount Int
+  channels       NotificationChannel[]
+  scheduledFor   DateTime?
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  createdBy      User           @relation("BatchCreator", fields: [createdById], references: [id])
+  template       NotificationTemplate? @relation(fields: [templateId], references: [id])
+  notifications  Notification[]
+
+  @@index([status, createdAt])
+}
+
+model Notification {
+  id               String              @id @default(cuid())
+  batchId          String
+  recipientUserId  String
+  personalizedData Json
+  status           NotificationStatus  @default(QUEUED)
+  openedAt         DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  batch            NotificationBatch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  recipient        User                @relation("NotificationRecipient", fields: [recipientUserId], references: [id])
+  deliveries       NotificationDelivery[]
+
+  @@index([batchId, createdAt])
+  @@index([recipientUserId, createdAt])
+}
+
+model NotificationDelivery {
+  id                 String              @id @default(cuid())
+  notificationId     String
+  channel            NotificationChannel
+  status             DeliveryStatus      @default(QUEUED)
+  renderedSubject    String?
+  renderedBody       String
+  providerMessageId  String?
+  failureCode        String?
+  failureMessage     String?
+  attemptCount       Int                 @default(0)
+  maxAttempts        Int                 @default(3)
+  availableAt        DateTime            @default(now())
+  lastAttemptAt      DateTime?
+  sentAt             DateTime?
+  openedAt           DateTime?
+  lockedAt           DateTime?
+  lockedBy           String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  notification       Notification        @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  attempts           DeliveryAttempt[]
+
+  @@unique([notificationId, channel])
+  @@index([status, availableAt])
+  @@index([lockedAt, lockedBy])
+}
+
+model DeliveryAttempt {
+  id              String               @id @default(cuid())
+  deliveryId      String
+  attemptNumber   Int
+  result          AttemptResult
+  errorMessage    String?
+  responsePayload Json?
+  createdAt       DateTime             @default(now())
+  delivery        NotificationDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId, createdAt])
+}
+
+model RateLimitWindow {
+  id          String              @id @default(cuid())
+  userId      String
+  channel     NotificationChannel
+  windowStart DateTime
+  sentCount   Int                 @default(0)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([userId, channel, windowStart])
+  @@index([userId, channel, windowStart])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorUserId String?
+  action     String
+  entityType String
+  entityId   String
+  payload    Json?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation("AuditActor", fields: [actorUserId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+}
