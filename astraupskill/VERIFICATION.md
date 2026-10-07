@@ -1,18 +1,46 @@
 # Verification and limits
 
-Executed from the staged `ww29` project:
+## Recorded evidence (historical)
+
+[evidence/results.json](evidence/results.json) records a run of:
 
 ```text
 node --experimental-vm-modules --test tests/runtime-notification-open-lab.test.mjs
 ```
 
-Six cases passed: foreign VIEWER denial with zero writes, own notification refusal when no delivery is SENT, sent owner opening with delivery/status/audit sequencing, and ADMIN opening another recipient's sent notification. The test loads the actual notification service and actual permission matrix, with explicit repository and database doubles. Results are recorded in [evidence/results.json](evidence/results.json) and the TAP log is [evidence/crud-b06-astra-runtime.log](evidence/crud-b06-astra-runtime.log).
+from a staging copy of the project, with six tests passing. The JSON refers to a TAP log named
+`crud-b06-astra-runtime.log`; that log is **not** included in this repository's `evidence/`
+folder, so the JSON is the only artifact here. Re-run the command yourself before relying on it.
 
-The check does not execute Next route schemas, live Prisma transactions, delivery workers, notification attempts, or repeated-open behavior. It proves the service's authorization wiring, sent-state boundary, aggregate refresh call order, and audit invocation for the modeled cases. No production fix is claimed in this reviewed path. Before release, run normal typecheck and provider-backed tests, then make an explicit decision about transaction rollback and idempotent repeated opens. The evidence supports only the stated service-level cases.
-Those follow-up checks are part of the release decision because a mocked repository cannot represent durable failure recovery.
+## What the six cases assert
 
-The added cases verify mixed OPENED/FAILED delivery aggregation and propagate an injected notification-status failure after the delivery and timestamp calls. No batch update or audit follows that failure. Real ApiError and both derivation functions execute; generated enum values and an unused ZodError export are adapters. This proves call ordering, not persisted rollback: the source has no encompassing open transaction.
+| Case | Lines | Assertion |
+|---|---|---|
+| foreign VIEWER | 53-57 | rejects with `status === 404`; `calls` empty |
+| own, unsent | 59-63 | rejects with `status === 409`; `calls` empty |
+| own, sent | 65-70 | exact five-entry call sequence ending in audit |
+| ADMIN, foreign | 72-76 | `opened: true`; last call is the audit |
+| mixed statuses | 78-84 | notification and batch both `PARTIAL_FAILURE` |
+| aggregate failure | 86-90 | the injected error propagates; only the first two writes recorded |
 
-## Astra execution evidence
+Real code executed: `notificationService.ts`, `permissions.ts`, `api-errors.ts`, and the two
+derivation functions from `notificationRepository.ts`. Adapters: Prisma enums, `@/lib/db`, `zod`'s
+`ZodError` (imported by `api-errors.ts` but unused on this path), rendering helpers and all
+repository writes.
 
-The captured focused production-source suite executed 6 tests: all passed, zero failed and zero skipped. Read the [captured output](evidence/crud-b06-astra-runtime.log) and [exact command and limits](evidence/results.json). Earlier check records remain preserved in the workspace.
+## What is not verified
+
+Next route handlers, Zod parsing, the JWT session, live Prisma, transactions, the worker, delivery
+attempts, rate limiting, and repeated-open behaviour. No production fix is claimed.
+
+The Vitest suite (`npm test`) is a separate harness; this lab is not part of it by design, and
+nothing in the repository wires it into a script.
+
+## Before treating this path as release-ready
+
+- decide and test transaction boundaries for open (finding 5 in
+  [06-SOLUTIONS-AND-REVIEW.md](06-SOLUTIONS-AND-REVIEW.md));
+- decide repeat-open semantics;
+- fix the rate limiter and the stranded-`PROCESSING` claim (findings 1 and 2), which are outside this
+  path but affect the same delivery rows this path reads;
+- run typecheck and provider-backed tests against a real PostgreSQL database.

@@ -33,7 +33,47 @@
 
 - List scoping is enforced in `src/repositories/notificationRepository.ts` inside `listNotificationsForActor()`. The repository itself applies `recipientUserId` filtering when the actor is a `VIEWER` or when the caller explicitly requests `mine=true`.
 - Detail scoping is enforced in `src/services/notificationService.ts` inside `getNotificationDetailForSession()`. Even if a caller guesses another notification ID, the service returns `404` when `recipientUserId !== session.userId`.
-- Open tracking uses the same ownership boundary in `src/services/notificationService.ts` inside `markNotificationOpenedForSession()`.
+- Open tracking uses the same ownership boundary in `src/services/notificationService.ts` inside `markNotificationOpenedForSession()` (lines 292-296). Note what that implies: because ADMIN and OPERATOR hold `notifications:view:any`, they can also **open** another user's notification, even though the action checked is named `notifications:open:own`. The lab in `tests/runtime-notification-open-lab.test.mjs:72-76` pins this for ADMIN.
+
+## Line-level session walkthrough
+
+- `src/lib/auth/session.ts:27-38` signs `{ userId, email, name, role }` with HS256, `iat`, and a 7-day
+  expiry using `env.SESSION_SECRET` (validated to at least 16 characters in `src/lib/env.ts:5`).
+- `:100-102` writes the cookie as `HttpOnly; SameSite=Lax; Max-Age=604800` with `Path=/`. There is no
+  `Secure` attribute, so the cookie would also travel over plain HTTP.
+- `:40-60` verifies the token and requires all four claims; any `jose` error becomes `null`.
+- `:62-73` parses the raw `cookie` header by hand and URL-decodes the value.
+- `:85-98` `requireApiSession` throws 401 without a session and then optionally calls `requireAction`.
+- `src/app/api/auth/me/route.ts:11-21` returns `{ user: null }` with 200 when unauthenticated, and
+  otherwise re-reads the user from the database — the only place where the role is refreshed from
+  the database rather than taken from the token.
+
+## Route-to-permission matrix
+
+| Route | Permission checked in route | Further check in service |
+|---|---|---|
+| `GET /api/notifications` | `notifications:view:own` | VIEWER (or `mine=true`) scoped to self in the repository query |
+| `POST /api/notifications` | `notifications:create` | repeated at `notificationService.ts:89` |
+| `GET /api/notifications/[id]` | `notifications:view:own` | ownership or `view:any`, 404 otherwise |
+| `POST /api/notifications/[id]/open` | `notifications:open:own` | ownership or `view:any`, then `SENT` precondition |
+| `GET, PUT /api/preferences` | `preferences:manage:own` | always the session's own user |
+| `GET /api/admin/dashboard` | none (session only) | `dashboard:view:admin` in `monitoringService.ts:13` |
+
+## Senior-review findings
+
+1. **Staff-generated opens.** See the note on open tracking above.
+2. **Directory over-exposure.** `GET /api/notifications` returns `composer` data to every role
+   (`src/app/api/notifications/route.ts:26-28`), including every user's email and role from
+   `listRecipientDirectory`. A VIEWER only needs their own notifications.
+3. **Role changes lag up to 7 days.** The role is baked into the token; nothing re-reads it on
+   protected routes. Logout clears the cookie on one browser only (`src/app/api/auth/logout/route.ts:18`);
+   a copied token remains valid until expiry.
+4. **No login throttling.** `loginWithPassword` (`src/services/authService.ts:12-32`) has no attempt
+   counter; the vague error message prevents enumeration but not brute force.
+
+**Exercise — Goal:** confirm finding 3. **Check:** follow `requireApiSession` and confirm no database
+read of the user's role occurs between `verifySessionToken` and `requireAction`
+(`session.ts:85-98`).
 
 ## Why multi-tenancy is not included
 

@@ -53,3 +53,45 @@
 4. `src/services/notificationService.ts` — `getNotificationDetailForSession()` compares `notification.recipientUserId` against `session.userId` when the actor lacks `notifications:view:any`.
 5. `src/lib/http/api-errors.ts` — `withRouteErrorHandling()` serializes the `404` if the notification belongs to someone else.
 6. Returns either `{ notification }` or a `404` ownership rejection.
+
+## Line references for the flows above
+
+| Flow step | Location |
+|---|---|
+| Batch POST route | `src/app/api/notifications/route.ts:38-44` |
+| Batch service | `src/services/notificationService.ts:85-243` (transaction 116-238) |
+| Dashboard route | `src/app/api/admin/dashboard/route.ts:11-16` |
+| Admin check | `src/services/monitoringService.ts:13` |
+| Open route | `src/app/api/notifications/[id]/open/route.ts:11-20` |
+| Open service | `src/services/notificationService.ts:280-323` |
+| Worker loop | `src/workers/notificationWorker.ts:20-31` |
+| Claim | `src/repositories/deliveryRepository.ts:13-73` |
+| Per-delivery processing | `src/services/workerService.ts:34-129` |
+| Detail route | `src/app/api/notifications/[id]/route.ts:11-20` |
+
+## Corrections to the worker flow
+
+- Step 4-5: the rate-limit reservation happens before the send attempt and consumes a slot even if
+  the send then fails (`workerService.ts:37-41` precede line 66).
+- Step 5: "or returns a defer time" — the function can return one in principle (line 62), but with
+  the current `CASE` expression it never does; see `astraupskill/06-SOLUTIONS-AND-REVIEW.md`.
+- Step 7-9: these are three or four separate writes with no transaction.
+
+## Flow: Viewer updates preferences
+
+1. `src/app/preferences/page.tsx` renders `src/components/forms/preference-form.tsx`.
+2. `src/hooks/usePreferences.ts` sends `PUT /api/preferences`.
+3. `src/app/api/preferences/route.ts:22-28` — `requireApiSession(request, "preferences:manage:own")`,
+   then `preferenceUpdateSchema.parse()`.
+4. `src/lib/validation/preferenceSchemas.ts:17-36` rejects half-set or zero-length quiet hours.
+5. `src/services/preferenceService.ts:44-68` — loads the user, upserts the preference, writes an
+   audit row with the full input as payload.
+6. Returns `{ preferences }`.
+
+Note that preferences affect only deliveries created **after** the change: opt-outs and quiet hours
+are applied in `createNotificationBatchForSession` (lines 167-206), and the worker does not re-check
+them.
+
+**Exercise — Goal:** trace a seeded quiet-hours user. **Check:** `prisma/seed.ts:84-85` gives
+`customer.two@example.com` quiet hours 22 to 6. For a batch created at 23:00 server time, compute
+`availableAt` with `getQuietHoursResumeAt` (`notificationService.ts:46-55`): 06:00 the next day.

@@ -185,3 +185,30 @@
   - `tests/notification-open-transition.test.ts`: verify invalid state transitions are blocked before mutation.
   - `docs/learning/flow-traces.md`: verify the documented flows still match the real function names and files.
 - Junior reviewer trap: Treating docs and tests as secondary polish instead of checking whether they capture the load-bearing risks accurately.
+
+### Later addition — service-level open lab
+- Purpose in one sentence: execute the real open transition and status derivation against recording doubles.
+- Files: `tests/runtime-notification-open-lab.test.mjs`, `tests/helpers/load-typescript.mjs`, `astraupskill/`.
+- Reviewer focus: the lab documents partial progress on failure; it does not add a transaction.
+
+## Retrospective: did the slices' reviewer focus hold up?
+
+Reading the code against the "Reviewer focus" bullets above:
+
+- **Slice 3, "verify `claimDueDeliveries()` is atomic and lease-aware."** Atomic: yes (single CTE
+  with `FOR UPDATE SKIP LOCKED`, `deliveryRepository.ts:17-42`). Lease-aware: no — the stale-lease
+  clause cannot match a `PROCESSING` row.
+- **Slice 3, "verify rate-limit increments are atomic."** Atomic: yes. Correct: no — a full window
+  still returns `allowed: true` (`rateLimitRepository.ts:49-61`). Atomicity was reviewed; the
+  return-value interpretation was not.
+- **Slice 3, "verify permanent failure, retry, and rate-limit deferral all end in the correct
+  persisted states."** Permanent failure: yes. Retry: no — `attemptCount` never advances on
+  `RETRYING`, so there is no terminal state for transient errors.
+- **Slice 2, "verify the transaction boundary around batch creation."** Holds
+  (`notificationService.ts:116-238`).
+- **Decision "Async queue architecture" — "Senior worries about lease expiry."** That worry was
+  warranted; see above.
+
+**Exercise — Goal:** practise review with a checklist. **Check:** for each "Reviewer focus" bullet in
+Slice 4, write "holds" or "does not hold" with one file:line citation. For example,
+`monitoringService.ts:13` shows admin enforcement is server-side, so that bullet holds.

@@ -35,3 +35,39 @@ A more thorough production suite would add:
 - A list-endpoint scoping test against real seeded data
 - Mutation tests proving one viewer cannot open another viewer's notification
 - Integration coverage once tenant or organization scope is introduced in the future
+
+## `tests/runtime-notification-open-lab.test.mjs` — six service-level cases
+
+Added later as a `node:test` file run with `node --experimental-vm-modules --test`. It loads the real
+`notificationService.ts`, permission matrix and status-derivation functions, and records repository
+writes. It covers the two follow-ups suggested above for the open transition — the positive
+`SENT -> OPENED` path with aggregate recomputation (lines 65-70) and cross-viewer open rejection
+(lines 53-57) — plus admin opens, mixed-status derivation, and partial progress when an aggregate
+write fails (lines 86-90). It still does not cover idempotent repeat opens.
+
+## What each Vitest test really exercises
+
+| Test | Real code executed | Mocked |
+|---|---|---|
+| `admin-dashboard-auth` | route handler, `requireApiSession`, JWT sign/verify with `jose`, `requireAction`, `withRouteErrorHandling` | nothing; the 403 is thrown before any query |
+| `notification-schema` | `createNotificationBatchSchema` and its `superRefine` | nothing |
+| `notification-open-transition` | `markNotificationOpenedForSession` up to the `SENT` check | all repositories via `vi.mock`, including the derive functions |
+| `notification-data-isolation` | `getNotificationDetailForSession` | all repositories via `vi.mock` |
+
+## The riskiest untested code
+
+These are the places where the code has real defects that a test would have caught (details in
+`astraupskill/06-SOLUTIONS-AND-REVIEW.md`):
+
+1. `reserveRateLimitSlot` — an integration test sending `limit + 1` reservations would show the
+   last one still returns `allowed: true` (`src/repositories/rateLimitRepository.ts:49-61`).
+2. `processSingleDelivery` transient path — a unit test with a stubbed repository would show
+   `attemptCount` never increases on `RETRYING` (`src/repositories/deliveryRepository.ts:115-132`).
+3. `claimDueDeliveries` — an integration test that leaves a row `PROCESSING` with an old `lockedAt`
+   would show it is never reclaimed (`deliveryRepository.ts:22-28`).
+4. `deriveBatchStatus` — a pure unit test with `[PARTIAL_FAILURE, PARTIAL_FAILURE]` would show it
+   returns `QUEUED` (`src/repositories/notificationRepository.ts:284-286`).
+
+**Exercise — Goal:** write the cheapest of these tests. **Check:** item 4 needs no database: import
+`deriveBatchStatus` in a Vitest file and assert the result for `["PARTIAL_FAILURE", "PARTIAL_FAILURE"]`.
+Decide first what the correct answer should be (most teams would say `PARTIAL_FAILURE`).

@@ -42,3 +42,28 @@ The design pushes decisions downward in a deliberate order:
 4. The worker in `src/workers/notificationWorker.ts` runs async delivery outside the request lifecycle.
 
 That separation is what makes the queue, retries, status transitions, and auth boundaries reviewable instead of implicit.
+
+## Precision notes
+
+- **Where rate limits are enforced.** In the worker path, per delivery, through
+  `reserveRateLimitSlot` (`src/repositories/rateLimitRepository.ts:33-64`) called from
+  `src/services/workerService.ts:37-41`. As written, that function never returns `allowed: false`
+  (see `astraupskill/06-SOLUTIONS-AND-REVIEW.md`, finding 1), so the limit is not effective.
+- **Not every route follows "authenticate and validate first".** `GET /api/admin/dashboard`
+  authenticates only and leaves the role check to `monitoringService.ts:13`. `GET /api/auth/me`
+  returns 200 `{ user: null }` when unauthenticated (`src/app/api/auth/me/route.ts:14-16`).
+- **Two raw SQL statements** carry the concurrency design: the claim CTE in
+  `src/repositories/deliveryRepository.ts:17-42` and the rate-limit upsert in
+  `rateLimitRepository.ts:43-56`. Everything else goes through the Prisma query API.
+- **One transaction.** Only batch creation uses `prisma.$transaction`
+  (`src/services/notificationService.ts:116-238`). Opening a notification and recording a worker
+  outcome are sequences of independent writes.
+- **Configuration is validated at import.** `src/lib/env.ts:9-13` throws if `DATABASE_URL` or a
+  16+ character `SESSION_SECRET` is missing; `tests/setup.ts` provides test defaults.
+
+## Exercise
+
+**Goal:** Verify the layering claim yourself.
+**Check:** Search `src/app/` and `src/services/` for `prisma.`. The only hits should be
+`prisma.$transaction` in `notificationService.ts:116`; every other database call should go through a
+function exported from `src/repositories/`.

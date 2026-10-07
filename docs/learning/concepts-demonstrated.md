@@ -59,3 +59,24 @@ Risk if wrong: Operators lose a trustworthy trail for security and operational r
 Where to look: `docs/architecture/auth-and-permissions.md` — the "Why multi-tenancy is not included" section explains the deliberate single-tenant choice and the files that would change later.
 Also see: `src/repositories/notificationRepository.ts` for the current user-scoped isolation boundary.
 Risk if wrong: Teams may assume tenant isolation exists when the current implementation only provides user/role isolation.
+
+## How well each concept is actually implemented
+
+| Concept | Demonstrated well | Gap in this clone |
+|---|---|---|
+| Zod validation boundary | `superRefine` rules in `notificationSchemas.ts:39-54`, `preferenceSchemas.ts:17-36` | `status` query param is any string (`notificationSchemas.ts:17`) and becomes a 500 on bad input |
+| Ownership isolation | Repository scoping at `notificationRepository.ts:66-70` | Staff roles can **open** other users' notifications (`notificationService.ts:292-296`) |
+| State transitions | `SENT` precondition plus SQL predicate (`deliveryRepository.ts:161`) | No transaction around the open writes; roll-up mislabels all-partial batches |
+| Background jobs | Separate worker process, sequential processing | Transient failures retry forever; crashed claims are never reclaimed |
+| Atomic queue claiming | Single CTE + `UPDATE ... RETURNING` with `SKIP LOCKED` | Stale-lease clause unreachable for `PROCESSING` rows |
+| Rate limiting | Atomic upsert, no read-then-write | Return value interpreted so the limit never denies |
+| Audit logging | Batch creation audits inside the transaction (`notificationService.ts:222-235`) | Open audit can be lost if an earlier write fails |
+| Quiet hours | Wrap-around ranges handled (`rendering.ts:62-66`) | Server-local hours; evaluated only at batch creation |
+
+## Exercise
+
+**Goal:** Turn a gap into a reviewable change.
+**Check:** Pick one row and write the smallest diff (in prose) that closes the gap, naming the exact
+line you would change. For rate limiting, for example: change line 61 of
+`rateLimitRepository.ts` so a full window is detected — one option is to make the `CASE` set
+`sentCount` to `limit + 1` when full, so `sentCount <= limit` becomes false.

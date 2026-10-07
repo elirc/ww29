@@ -55,3 +55,33 @@
 - What it calls: Nothing at runtime; it is the schema source of truth.
 - What would break or become insecure if this file were wrong: The app could not model retries, delivery history, or state isolation correctly.
 - What a junior engineer would likely miswrite here: Keeping only one notification row without per-channel delivery fan-out or attempt history.
+
+## Where the load-bearing files currently fall short
+
+The "what would break" bullets above describe risks. For three of these files the risk is already
+realised in this clone:
+
+- `src/repositories/rateLimitRepository.ts:49-61` — the upsert is atomic, but its return value is
+  interpreted so that a full window still reports `allowed: true`. Bursts are not limited at all.
+- `src/repositories/deliveryRepository.ts:22-28` — "stale processing rows could never recover" is
+  exactly what happens: the stale-lease clause cannot match a `PROCESSING` row because the status
+  filter excludes it.
+- `src/services/workerService.ts:94-95` together with `deliveryRepository.ts:115-132` — deliveries
+  are "retried forever" for transient failures because the deferral write does not increment
+  `attemptCount`.
+
+## Load-bearing lines (quick index)
+
+| File | Line(s) | Why |
+|---|---|---|
+| `src/lib/auth/permissions.ts` | 19-40 | The entire role matrix |
+| `src/lib/auth/session.ts` | 47-49 | Rejects tokens missing any of the four claims |
+| `src/services/notificationService.ts` | 116 | The only transaction in the app |
+| `src/services/notificationService.ts` | 292-296 | Ownership for detail-style access |
+| `src/repositories/notificationRepository.ts` | 66-70 | Repository-level self-scoping for lists |
+| `src/repositories/deliveryRepository.ts` | 31 | `FOR UPDATE SKIP LOCKED` — concurrent workers do not double-claim |
+| `src/services/workerService.ts` | 93 | Classifies 4xx `ApiError` as permanent |
+
+**Exercise — Goal:** connect a line to a failure. **Check:** for line 93 of `workerService.ts`, explain
+why a missing SMS phone number is treated as permanent: `sendViaChannel` throws
+`ApiError(422, ...)` for a null destination (`src/lib/notifications/channels.ts:30-32`).

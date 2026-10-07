@@ -43,3 +43,39 @@ Request: Operator tries to load the admin dashboard and is rejected
 3. `src/lib/auth/permissions.ts` — `requireAction()` throws `ApiError(403, ...)`.
 4. `src/lib/http/api-errors.ts` — `withRouteErrorHandling()` catches the `ApiError` and serializes the failure.
 5. Returns `403` with `{ error: "You do not have permission to perform this action." }`.
+   (`withRouteErrorHandling` also includes `details: null`, `src/lib/http/api-errors.ts:28-34`.)
+
+## Corrections and precision
+
+- **Batch creation, step 2.** The template/channel rule (`notificationService.ts:91-96`) and the
+  recipient lookup (lines 102-109) run **before** the transaction starts at line 116; recipients and
+  template are loaded in parallel with `Promise.all`.
+- **Batch creation, step 5.** Quiet hours only delay `availableAt` for `QUEUED` deliveries
+  (lines 201-206); opt-outs and missing destinations become `SKIPPED` first (lines 169-199).
+- **History, step 4.** Composer data is loaded for **every** caller, including viewers
+  (`src/app/api/notifications/route.ts:26-28`), not only operator/admin UI.
+- **Open, step 2.** Ownership is bypassed for roles with `notifications:view:any`, so ADMIN and
+  OPERATOR can open other users' notifications.
+
+## Request: Worker processes one claimed delivery (not HTTP, but the same layering)
+
+1. `src/workers/notificationWorker.ts:21` calls `processDueDeliveries(env.WORKER_ID, 10)`.
+2. `src/services/workerService.ts:132` claims up to ten rows (`claimDueDeliveries`).
+3. Each row is processed sequentially (`workerService.ts:143-146`).
+4. `processSingleDelivery` resolves the destination (line 36) and reserves a rate-limit slot
+   (lines 37-41).
+5. `sendViaChannel` (`src/lib/notifications/channels.ts:23-48`) throws `ApiError(422)` for a missing
+   destination or a `[[permanent-failure]]` body, a plain `Error` for `[[transient-failure]]`, and
+   otherwise returns a random message id.
+6. Success -> `markDeliverySent`, attempt `SENT`, recompute. Failure -> `FAILED` if the error is a 4xx
+   `ApiError` or attempts are exhausted (`maxAttempts` defaults to 3), else `RETRYING` with a delay of
+   1, 5 or 15 minutes (`workerService.ts:22-32`).
+
+**Exercise — Goal:** predict a retry schedule from the code, not from the intent. **Check:** for a
+delivery whose body contains `[[transient-failure]]`, list `status`, `attemptCount` and the delay
+after each of three worker passes. The design intent is 1, 5, then 15 minutes and a final `FAILED`
+with `MAX_ATTEMPTS_EXCEEDED`. The code gives `RETRYING`, `attemptCount` 0, delay 1 minute — on
+every pass, forever. Explain why using these lines: `markDeliveryDeferred` never increments
+`attemptCount` (`deliveryRepository.ts:115-132`), so `nextAttemptCount` (`workerService.ts:94`) is
+always 1, `exhausted` (line 95) is never true with `maxAttempts` 3, and `getRetryDelayMinutes(1)`
+returns 1 (lines 23-25). Each pass also writes a `DeliveryAttempt` with `attemptNumber` 1.

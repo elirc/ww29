@@ -71,3 +71,32 @@
 **What to look for:** Separate `Notification`, `NotificationDelivery`, and `DeliveryAttempt` models plus queue lock fields on `NotificationDelivery`.
 **What to trace:** Used by every repository through Prisma Client and by `prisma/seed.ts`.
 **What a junior would likely miss:** Retryable systems need attempt history and lease metadata in the schema, not just status enums.
+
+## Checkpoints
+
+Each Check is something you can confirm by reading the cited code.
+
+- **After Step 2.** **Goal:** know what is in the token. **Check:** list the four claims signed at
+  `src/lib/auth/session.ts:28-33` and the cookie attributes at line 101.
+- **After Step 3.** **Goal:** read the matrix. **Check:** state which actions OPERATOR lacks compared
+  with ADMIN (only `dashboard:view:admin`, `permissions.ts:20-34`).
+- **After Step 4.** **Goal:** see the cross-field rules. **Check:** name the two `superRefine` issues
+  in `notificationSchemas.ts:39-54` and say why neither rejects duplicate entries in `channels`.
+- **After Step 5.** **Goal:** see what is inside and outside the transaction. **Check:** confirm the
+  template/channel check (lines 91-96) and recipient lookup (102-109) run before `$transaction` at
+  line 116, and that `markNotificationOpenedForSession` uses no transaction at all.
+- **After Step 6.** **Goal:** run the roll-up by hand. **Check:** derive the batch status for
+  `[PARTIAL_FAILURE, PARTIAL_FAILURE]` from `deriveBatchStatus` (it returns `QUEUED`).
+- **After Step 7.** **Goal:** read the claim SQL critically. **Check:** explain why the
+  `"lockedAt" < staleBefore` clause (line 28) can never select a `PROCESSING` row.
+- **After Step 8.** **Goal:** simulate the limiter. **Check:** compute `allowed` for the sixth EMAIL
+  reservation in one hour (`limit` 5, lines 49-61) — it is `true`.
+- **After Step 9.** **Goal:** simulate backoff. **Check:** explain why the retry delay stays at one
+  minute for transient failures (lines 22-32 and 94, plus `markDeliveryDeferred`).
+
+## Optional Step 13 — `tests/runtime-notification-open-lab.test.mjs`
+
+**Why read this:** It runs the real open service against recording doubles.
+**What to look for:** The `calls` arrays and the sequence asserted at line 69.
+**What a junior would likely miss:** It is a `node:test` file, run with
+`node --experimental-vm-modules --test`, separate from the Vitest suite.
